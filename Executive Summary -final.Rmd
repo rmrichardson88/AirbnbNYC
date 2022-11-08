@@ -1,0 +1,1514 @@
+---
+title: "Executive Summary"
+output: html_document
+date: '2022-06-16'
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+# Table of Contents  
+
+1) Introduction   
+  1.1)Background  
+  1.2) Scope  
+2) Project Goal  
+3) Business Questions  
+4) Data Preparation/Pre-Processing/Exploration  
+  4.1) Data Acquisition  
+  4.2) Data Cleansing  
+  4.3) Data Transformation  
+  4.4) Data Munging  
+5) Data Visualization/Descriptive Statistics  
+6) Data Analysis  
+  6.1) Price Predictive model  
+  6.2) Price vs Location and Price vs Room Type Analysis  
+  6.3) Text Mining  
+7) Business Recommendations  
+8) Marketing Plan  
+9) Conclusions  
+
+## 1) Introduction:  
+
+  The dataset we chose to explore for the final project is AIRBNB for NYC. We were interested in the entire AIRBNB but due to the huge volume of the data, we focused our efforts on New York City which would give us a chance to make informed decisions with the limited data.       
+
+### 1.1) Background:  
+
+    Receiving its seed money in 2009/2010, AirBnB has become a recognizable global brand with increasing popularity over the last 10 years providing opportunities for novice and professional landlords to market property alternatives to hotels for (typically) short-term stays.  
+
+### 1.2) Scope:  
+
+    Our project is drawn from this open data set on Kaggle. It’s a relatively clean data set of nearly 49,000 listings and 16 attributes. It’s somewhat dated – from 2011 – and it is missing some crucial data that would be beneficial to confirm the results of our observations (notably, we use number_of_reviews as a proxy for the property’s popularity. We would rather use a percentage of availability_365 that were booked. Additionally, since we use number_of_reviews, it would be nice to know if those reviews were positive or negative.   
+
+## 2) Project Goal:  
+
+The goal of the project is to use all the techniques discussed in the class that are applicable for our analysis of this dataset and identify ways to increase AirBnB revenue.  
+
+## 3) Business Questions      
+
+##### 1) Are there opportunities for owners to clearly improve revenue in the data?  
+
+##### 2) Are there opportunities to draw more tenants by identifying attractively priced properties?  
+
+## 4) Data Exploration  
+
+### 4.1) Data Acquisition:  
+
+    We found this dataset on the Kaggle site. You can download it here: https://www.kaggle.com/datasets/dgomonov/new-york-city-airbnb-open-data  
+
+```{r} 
+#Let's also start by loading libraries that we will need for our analysis 
+library(tidyverse) 
+library(ggmap) 
+library(quanteda) 
+library(quanteda.textplots) 
+library(quanteda.textstats) 
+library(topicmodels) 
+library(caret) 
+library(rpart) 
+library(rpart.plot)
+library(lubridate)
+``` 
+
+```{r} 
+#Data Set and Summary – for team members: will need to edit this line to your path for the csv file. 
+airbnb <- read_csv("~/Documents/Syr/Intro to Data Science/Final Project/AB_NYC_2019.csv") 
+str(airbnb) 
+summary(airbnb) 
+``` 
+
+### 4.2) Data Cleansing:  
+
+Add all the comments that we get from our R code executions. The data is a relatively clean data set. We have a few NA's in the reviews_per_month and last_review columns. We will investigate these further. We also remove the host_name as it is redundant to host_id and want to preserve some anonymity for the hosts. We could pass these host_id’s along to AirBnb leadership if they want to reach out to these hosts to offer suggestions on increasing their tenant draw.   
+
+```{r} 
+#The summary shows few NAs in reviews_per_month attribute. Let's investigate these further as this could be a good metric to determine property popularity. 
+airbnbNAs <- airbnb %>% filter(is.na(reviews_per_month)) 
+unique(airbnbNAs$number_of_reviews) 
+``` 
+
+```{r} 
+#We can see that the reason there are NA's in the reviews_per_month column is because those are properties that have never had reviews. While we could run an interpolation on these to insert the mean reviews_per_month, it would be more accurate to substitute a 0 value for these NAs since these properties have never had reviews. 
+airbnb$reviews_per_month <- replace_na(airbnb$reviews_per_month, 0) 
+unique(is.na(airbnb$reviews_per_month)) 
+``` 
+
+```{r} 
+#The NA's have been replaced. We will now remove the host name column to preserve host anonymity. 
+airbnb <- airbnb[,-4] 
+glimpse(airbnb) 
+``` 
+
+### 4.3) Data Transformation:  
+
+```{r} 
+#It will be helpful to classify a few attributes as factors for later analysis. 
+airbnb$neighbourhood_group <- as.factor(airbnb$neighbourhood_group) 
+airbnb$room_type <- as.factor(airbnb$room_type) 
+airbnb$neighbourhood <- as.factor(airbnb$neighbourhood) 
+``` 
+
+### 4.4) Data Munging:  
+
+In order to break the data up into more manageable pieces, we subset by borough: 
+
+```{r} 
+abBrookFull <- airbnb %>% filter(neighbourhood_group=="Brooklyn") 
+AB_NYC_2019.Staten <- airbnb[airbnb$neighbourhood_group == "Staten Island", ] 
+AB_NYC_2019.Bronx <- airbnb[airbnb$neighbourhood_group == "Bronx", ]
+Queens <- subset(airbnb, neighbourhood_group == "Queens")
+airbnb_manhattan <- airbnb[airbnb$neighbourhood_group == "Manhattan", ]
+``` 
+
+## 5) Data Visualization/Descriptive Statistics  
+
+```{r}
+
+airbnb_hist <- airbnb %>% ggplot() + geom_histogram(aes(x=price), binwidth = 100, color = "black", fill = "pink")
+airbnb_hist
+#the histogram is totally not clear due to the wide spread of the x axis. Lets try bar chart if we get something clear
+
+airbnb %>% ggplot() + aes (x=price) + geom_bar()
+#this is similar to histogram
+
+ggplot(airbnb) + aes(y=price, x= neighbourhood_group) + geom_point() + scale_color_gradient(low = "blue", high = "red")
+# The plot shows there is a huge price difference between the each neighborhood group. 10000 blends well with Manhattan and Brooklyn, whereas it looks like a outlier to Queens. Lets subset Queens and see how the histogram looks.
+
+#Let's look at number of reviews to price
+ggplot(airbnb) + aes(y=price, x= number_of_reviews, color = price) + geom_point() + scale_color_gradient(low = "blue", high = "red")
+```
+
+```{r}
+# Mean price plot based on each boroughs
+airbnb %>% 
+  filter(!(is.na(neighbourhood_group))) %>% 
+  filter(!(neighbourhood_group == "Unknown")) %>% 
+  group_by(neighbourhood_group) %>% 
+  summarise(mean_price = mean(price, na.rm = TRUE)) %>% 
+  ggplot(aes(x = reorder(neighbourhood_group, mean_price), y = mean_price, fill = neighbourhood_group)) +
+  geom_col(stat ="identity", color = "black", fill="pink") +
+  coord_flip() +
+  theme_gray() +
+  labs(x = "Neighbourhood Group", y = "Price") +
+  geom_text(aes(label = round(mean_price,digit = 2)), hjust = 2.0, color = "white", size = 3.5) +
+  ggtitle("Mean Price comparison for each Neighbourhood Group", subtitle = "Price vs Neighbourhood Group") + 
+  xlab("Neighbourhood Group") + 
+  ylab("Mean Price") +
+  theme(legend.position = "none",
+        plot.title = element_text(color = "black", size = 14, face = "bold", hjust = 0.5),
+        plot.subtitle = element_text(color = "black", hjust = 0.5),
+        axis.title.y = element_text(),
+        axis.title.x = element_text(),
+        axis.ticks = element_blank())
+
+# Mean price plot based on room type for each borough.
+
+airbnb %>% 
+  filter(!(is.na(room_type))) %>% 
+  filter(!(room_type == "Unknown")) %>% 
+  group_by(room_type) %>% 
+  summarise(mean_price = mean(price, na.rm = TRUE)) %>% 
+  ggplot(aes(x = reorder(room_type, mean_price), y = mean_price, fill = room_type)) +
+  geom_col(stat ="identity", color = "black", fill="pink") +
+  coord_flip() +
+  theme_gray() +
+  labs(x = "Room Type", y = "Price") +
+  geom_text(aes(label = round(mean_price,digit = 2)), hjust = 2.0, color = "white", size = 3.5) +
+  ggtitle("Mean Price comparison with all Room Types", subtitle = "Price vs Room Type") + 
+  xlab("Room Type") + 
+  ylab("Mean Price") +
+  theme(legend.position = "none",
+        plot.title = element_text(color = "black", size = 14, face = "bold", hjust = 0.5),
+        plot.subtitle = element_text(color = "darkblue", hjust = 0.5),
+        axis.title.y = element_text(),
+        axis.title.x = element_text(),
+        axis.ticks = element_blank())
+
+# Building simple linear model 
+
+set.seed(123)
+
+trainlist <- createDataPartition(y=airbnb$price, p=.8, list=FALSE)
+# setting the partition percentage
+trainset <- airbnb[trainlist,]
+head(trainset)
+# creating training set from the list
+testset <- airbnb[-trainlist,]
+#creating the test set 
+dim(trainset)
+dim(testset)
+trctrl <- trainControl(method = "cv", number = 10)
+model <- lm(price ~ neighbourhood_group + room_type + availability_365 + minimum_nights + last_review + neighbourhood + number_of_reviews, data = trainset)
+model_summary <- summary(model)
+model_summary$adj.r.squared
+```
+
+```{r}
+theme_set(theme_minimal())
+airbnb$review <- airbnb$last_review 
+airbnb$review <- as.Date(airbnb$review, "%m/%d/%Y")
+review <- filter(airbnb,!is.na(airbnb$review))
+reviewnum <- review %>% group_by(date = review) %>% summarise(number= n()) 
+
+ggplot(data = reviewnum, aes(x=date,y=number)) + geom_point(na.rm= TRUE, color = "#007A87" , alpha=0.5) + geom_smooth(color="red")+
+ggtitle("Popularity over the period")+labs(x="Year", y= "Listing with reviews") + theme(plot.title=element_text(face="bold"))+theme(plot.caption=element_text(color="grey"))
+# The graph shows how the popularity of AIRBNB grew exponentially over the period
+
+# Now lets analyse the seasonality in the data for 3 consecutive years
+library(lubridate)
+ggplot(reviewnum[year(reviewnum$date) == 2016,], aes(date, number)) +
+geom_point(na.rm=TRUE, color = "#007A87", alpha=0.5) +geom_smooth(color = "#FF5A5F")+
+ggtitle("Seasonality in Property",
+subtitle = "Number of Reviews in 2016") +
+labs(x = "Month", y = "Listing with reviews") +
+theme(plot.title = element_text(face = "bold")) +
+theme(plot.subtitle = element_text(face = "bold", color = "grey35")) +
+theme(plot.caption = element_text(color = "grey68"))
+
+# for year 2017
+
+ggplot(reviewnum[year(reviewnum$date) == 2017,], aes(date, number)) +
+geom_point(na.rm=TRUE, color = "#007A87", alpha=0.5) +geom_smooth(color = "#FF5A5F")+
+ggtitle("Seasonality in Property",
+subtitle = "Number of Reviews in 2017") +
+labs(x = "Month", y = "Listing with reviews") +
+theme(plot.title = element_text(face = "bold")) +
+theme(plot.subtitle = element_text(face = "bold", color = "grey35")) +
+theme(plot.caption = element_text(color = "grey68"))
+
+# for year 2018
+
+ggplot(reviewnum[year(reviewnum$date) == 2018,], aes(date, number)) +
+geom_point(na.rm=TRUE, color = "#007A87", alpha=0.5) +geom_smooth(color = "#FF5A5F")+
+ggtitle("Seasonality in Property",
+subtitle = "Number of Reviews in 2018") +
+labs(x = "Month", y = "Listing with reviews") +
+theme(plot.title = element_text(face = "bold")) +
+theme(plot.subtitle = element_text(face = "bold", color = "grey35")) +
+theme(plot.caption = element_text(color = "grey68"))
+
+# for year 2019
+
+ggplot(reviewnum[year(reviewnum$date) == 2019,], aes(date, number)) +
+geom_point(na.rm=TRUE, color = "#007A87", alpha=0.5) +geom_smooth(color = "#FF5A5F")+
+ggtitle("Seasonality in Property",
+subtitle = "Number of Reviews in 2019") +
+labs(x = "Month", y = "Listing with reviews") +
+theme(plot.title = element_text(face = "bold")) +
+theme(plot.subtitle = element_text(face = "bold", color = "grey35")) +
+theme(plot.caption = element_text(color = "grey68"))
+
+# Looking at the graphs from 2016 to 2019 it shows that we have a trend in the renting of properties. We see a fall during spring and fall and see peak during summers. 
+```
+
+## Let's also zooom in to look at each borough in more detail
+
+### Let's start by looking at Queens:
+```{r}
+
+Queens <- subset(airbnb, neighbourhood_group == "Queens")
+str(Queens)
+summary(Queens)
+Queens %>% ggplot() + geom_histogram(aes(x=price), binwidth = 100, color = "black", fill = "pink")
+# since we have only one biggest outlier, Lets delete our outlier and see.
+
+Queens <- filter(Queens, price != 10000)
+
+Queens %>% ggplot() + geom_histogram(aes(x=price), bins = 50, color = "black", fill = "pink")
+ggplot(Queens) + aes(y=price, x= neighbourhood) + geom_point(aes(color = price)) + scale_color_gradient(low = "blue", high = "red") + theme(axis.text.x = element_text(angle = 90, hjust = 1))
+# The plot gives some meaning now.
+
+# Lets use quartiles 
+# Using Quartiles
+#Subset and Viz for all of Queens
+priceQ1 <- quantile(Queens$price, .25)
+priceQ3 <- quantile(Queens$price, .75)
+priceIQR <- IQR(Queens$price)
+Queensno <- subset(Queens, Queens$price > (priceQ1 - 1.5*priceIQR) & Queens$price < (priceQ3 + 1.5*priceIQR)) 
+glimpse(Queensno)
+Queensno %>% ggplot() + aes(y=price, x= neighbourhood) + geom_point(aes(color = price)) + scale_color_gradient(low = "blue", high = "red") + theme(axis.text.x = element_text(angle = 90, hjust = 1))
+# The plot looks more intuitive with the lower price showing in more detail.
+Queensno %>% ggplot() + aes(y=price, x=neighbourhood) + geom_boxplot() + theme(axis.text.x = element_text(angle = 90, hjust = 1))
+# The boxplot of Queens without outliers
+
+#We can see that Bay Terrace is the most expensive neighborhood followed by Rockway Beach, Arvene, Jamaica Estates and Long Island City in Queens with the typical property much closer to $150 a night.
+
+#Now, lets check how pirce varies based on the room type
+ggplot(Queensno) + aes(y=price, x= room_type) + geom_point(aes(color = price, shape = room_type)) + scale_color_gradient(low = "blue", high = "red") + theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+```{r}
+#Let's look at our outliers a bit more in detail to understand what's going on here:
+queensPricey <- Queens %>% filter(price >= 750)
+queensPricey[,2:15]
+```
+
+```{r}
+#It looks like we have 17 properties listed that are priced a fair amount more than the bulk of the properties in Queens. We can see a few of these properties have 0 days of availability, a couple require stays of hundreds of nights, and others are luxury properties on the lake.
+```
+
+# Creating a predictive price model for Queens borough
+```{r}
+#Let's look at number of reviews to price in the standard property list
+ReviewstoPrice <- lm(number_of_reviews ~ price, data = Queensno)
+ReviewstoPrice_summary <- summary(ReviewstoPrice)
+ReviewstoPrice_summary$adj.r.squared
+
+
+# Does not give any intuitive results. Lets try the other way round
+
+#Let's look at number of reviews to price in the standard property list
+priceToReviews <- lm(price ~ number_of_reviews , data = Queensno)
+priceToReviews_summary <- summary(priceToReviews)
+priceToReviews_summary$adj.r.squared
+
+ggplot(Queensno) + aes(x=price, y= number_of_reviews, color = price) + geom_point() + scale_color_gradient(low = "blue", high = "red") + geom_smooth(color = "yellow")
+
+# No difference. 
+
+#Let's look at Room type to price in the standard property list
+priceToRoom <- lm(price ~ room_type , data = Queensno)
+priceToRoom_summary <- summary(priceToRoom)
+priceToRoom_summary$adj.r.squared
+
+ggplot(Queensno) + aes(x=price, y= room_type, color = price) + geom_point() + scale_color_gradient(low = "blue", high = "red") + geom_smooth(color = "yellow")
+
+# This shows a significant impact of room type on price. now lets add availability_365
+priceToRoomtype_availability <- lm(price ~ room_type + availability_365 , data = Queensno)
+priceToRoomtype_availability_summary <- summary(priceToRoomtype_availability)
+priceToRoomtype_availability_summary$adj.r.squared
+
+ggplot(Queensno) + aes(x=price, y= availability_365, color = price) + geom_point() + scale_color_gradient(low = "blue", high = "red") + geom_smooth(color = "yellow")
+
+# There is little difference in R value. Lets keep adding more attributes and check the model.
+
+priceToRoom_avai_list <- lm(price ~ room_type + availability_365 + calculated_host_listings_count , data = Queensno)
+priceToRoom_avai_list_summary <- summary(priceToRoom_avai_list)
+priceToRoom_avai_list_summary$adj.r.squared
+
+
+ggplot(Queensno) + aes(x=price, y= calculated_host_listings_count, color = price) + geom_point() + scale_color_gradient(low = "blue", high = "red") + geom_smooth(color = "yellow")
+
+# Again very little improvement. Lets add minimum_nights
+
+priceToRoom_avai_list_nights <- lm(price ~ room_type + availability_365 + calculated_host_listings_count + minimum_nights , data = Queensno)
+priceToRoom_avai_list_nights_summary <- summary(priceToRoom_avai_list_nights)
+priceToRoom_avai_list_nights_summary$adj.r.squared
+
+ggplot(Queensno) + aes(x=price, y= minimum_nights, color = price) + geom_point() + scale_color_gradient(low = "blue", high = "red") + geom_smooth(color = "yellow")
+
+
+# Again improved a teeny bit. Now lets add host_id and see if model changes.
+
+
+priceToRoom_avai_list_nights_host <- lm(price ~ room_type + availability_365 + calculated_host_listings_count + minimum_nights + host_id, data = Queensno)
+priceToRoom_avai_list_nights_host_summary <- summary(priceToRoom_avai_list_nights_host)
+priceToRoom_avai_list_nights_host_summary$adj.r.squared
+
+ggplot(Queensno) + aes(x=price, y= host_id, color = price) + geom_point() + scale_color_gradient(low = "blue", high = "red") + geom_smooth(color = "yellow")
+
+# No difference and infact the host id is not statistically significant as well. 
+# We could see from the boxplot that we do have few areas of high prices. So lets see if our model considers that. Lets add neighbourhood
+
+priceToRoom_avai_list_nights_host_neigh <- lm(price ~ room_type + availability_365 + calculated_host_listings_count + minimum_nights + host_id + neighbourhood, data = Queensno)
+priceToRoom_avai_list_nights_host_neigh_summary <- summary(priceToRoom_avai_list_nights_host_neigh)
+priceToRoom_avai_list_nights_host_neigh_summary$adj.r.squared
+
+
+
+
+# That's great. We have a change in our adjusted R2. This model looks a bit predictable now. Shall we see if the last review matters? Let's add that last_review
+
+priceToRoom_avai_list_nights_host_neigh_last <- lm(price ~ room_type + availability_365 + calculated_host_listings_count + minimum_nights + host_id + neighbourhood + last_review, data = Queensno)
+priceToRoom_avai_list_nights_host_neigh_last_summary <- summary(priceToRoom_avai_list_nights_host_neigh_last)
+priceToRoom_avai_list_nights_host_neigh_last_summary$adj.r.squared
+
+
+ggplot(Queensno) + aes(x=price, y= last_review, color = price) + geom_point() + scale_color_gradient(low = "blue", high = "red") + geom_smooth(color = "yellow")
+
+# This is considerably better. We started with 1% variability to nearly 50% in the model. This is great improvement. Now lets take off host_id and run as that is not significant in our model.
+
+priceToRoom_avai_list_nights_nohost_neigh_last <- lm(price ~ room_type + availability_365 + calculated_host_listings_count + minimum_nights + neighbourhood + last_review, data = Queensno)
+priceToRoom_avai_list_nights_nohost_neigh_last_summary <- summary(priceToRoom_avai_list_nights_nohost_neigh_last)
+priceToRoom_avai_list_nights_nohost_neigh_last_summary$adj.r.squared
+
+# There is little change. So now lets inspect if we have any variables that are not adding value but burdening the model and remove them. Looks like there are all contributing well to the model. Let see if we can add any other variables. How about number_of_reviews. I know it didnt show an impressive model with price. May be combined with others it might show an impact. lets check it out. 
+
+priceToRoom_avai_list_nights_nohost_neigh_last_reviews <- lm(price ~ room_type + availability_365 + calculated_host_listings_count + minimum_nights + neighbourhood + last_review + number_of_reviews, data = Queensno)
+priceToRoom_avai_list_nights_nohost_neigh_last_reviews_summary <- summary(priceToRoom_avai_list_nights_nohost_neigh_last_reviews)
+priceToRoom_avai_list_nights_nohost_neigh_last_reviews_summary$adj.r.squared
+plot(priceToRoom_avai_list_nights_nohost_neigh_last_reviews)
+
+
+# Alright, am almost done with my variables so not sure if I can add any. Lets stick to this model. 
+
+```
+
+```{r}
+
+#Lets check how price varies based on the room type
+ggplot(Queens) + aes(y=price, x= room_type) + geom_point(aes(color = price, shape = room_type)) + scale_color_gradient(low = "blue", high = "red") + theme(axis.text.x = element_text(angle = 45, hjust = 1))
+# The shared room costs less and has fewer plots compared to Entire home/apt. Now lets see how hosts are classified. 
+Queens %>% ggplot() + geom_histogram(aes(x=host_id), bins = 25, color = "black", fill = "pink")
+# There are certainly few professionals and few newcomers in the hosts. We can use this chart to look for hosts that needs help.
+Queens %>% group_by(host_id) %>% ggplot(aes(x=host_id,y=number_of_reviews)) + geom_col(color = "black", aes(fill = number_of_reviews))
+#This kind of shows there are differences but not clear on what hosts are doing good with reviews. We can resolve this based on text mining. 
+```
+
+```{r}
+#Let's also look more broadly by neighborhood
+QueensNO2 <- filter(Queens, price <= 1500)
+QueensNO2 %>% ggplot() + aes(y=price, x= neighbourhood) + geom_point(aes(color = price)) + scale_color_gradient(low = "blue", high = "red") + theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+QueensNO2 %>% ggplot() + aes(y=price, x=neighbourhood) + geom_boxplot() + theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+# Looking at room types with price < 1500 
+
+ggplot(QueensNO2) + aes(y=price, x= room_type) + geom_point(aes(color = price, shape = room_type)) + scale_color_gradient(low = "blue", high = "red") + theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+# Statistics of the data without outliers 
+
+mean(Queensno$price)
+median(Queensno$price)
+quantile(Queensno$price)
+
+# The shared room costs less and has fewer plots compared to Entire home/apt. Now lets see how hosts are classified. 
+Queensno %>% ggplot() + geom_histogram(aes(x=host_id), bins = 25, color = "black", fill = "pink")
+
+
+
+
+```  
+  
+### Let's look at Brooklyn next:
+```{r}
+#Intro Viz
+abBrookFull %>% ggplot() + aes(y=price, x= neighbourhood) + geom_point(aes(color = price)) + scale_color_gradient(low = "blue", high = "red") + theme(axis.text.x = element_text(angle = 90, hjust = 1))
+```
+
+```{r}
+#Let's look at our outliers a bit more in detail to understand what's going on here:
+abBrookPricey <- abBrookFull %>% filter(price >= 2500)
+abBrookPricey[,2:15]
+```
+
+```{r}
+#It looks like we have 17 properties that are much more expensive that are marketed as either luxury rentals or filming, photography, or production locations that are not really for the standard visitor.
+```
+
+```{r}
+#Subset and Viz without outliers flattened for all of Brooklyn. This visualization looks at the IQR - ie, the most "standard" properties.
+priceQ1 <- quantile(abBrookFull$price, .25)
+priceQ3 <- quantile(abBrookFull$price, .75)
+priceIQR <- IQR(abBrookFull$price)
+abBrookNO <- subset(abBrookFull, abBrookFull$price > (priceQ1 - 1.5*priceIQR) & abBrookFull$price < (priceQ3 + 1.5*priceIQR)) 
+glimpse(abBrookNO)
+```
+
+```{r}
+#Let's zoom in and look at price across these standard properties in Brooklyn to see if there are any major factors that really stand out.
+brookPriceLm <- lm(price ~ neighbourhood + room_type + minimum_nights + number_of_reviews + reviews_per_month + calculated_host_listings_count + availability_365, data = abBrookNO)
+summary(brookPriceLm)
+```
+
+```{r}
+#While this model is a little unwieldy by volume, we can quickly spot a few desirable neighborhoods for those visiting the borough. As well as some large savings if visitors are willing to stay in a private or shared room instead of a home or entire apartment. Let's look at some visualizations based on this model:
+
+#First let's look by neighborhood:
+abBrookNO %>% ggplot() + aes(y=price, x=neighbourhood) + geom_boxplot() + theme(axis.text.x = element_text(angle = 90, hjust = 1))
+#And then by room type:
+ggplot(abBrookNO) + aes(y=price, x= room_type) + geom_point(aes(color = price, shape = room_type)) + scale_color_gradient(low = "blue", high = "red") + theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+```{r}
+#Let's also expand a bit to keep in mind wider context. These visualizations account for some of the pricier properties, but do not include the 17 major outliers listed above
+abBrookNO2 <- filter(abBrookFull, price < 2500)
+abBrookNO2 %>% ggplot() + aes(y=price, x= neighbourhood) + geom_point(aes(color = price)) + scale_color_gradient(low = "blue", high = "red") + theme(axis.text.x = element_text(angle = 90, hjust = 1))
+abBrookNO2 %>% ggplot() + aes(y=price, x=neighbourhood) + geom_boxplot() + theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+ggplot(abBrookNO2) + aes(y=price, x= room_type) + geom_point(aes(color = price, shape = room_type)) + scale_color_gradient(low = "blue", high = "red") + theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+```{r}
+#Let's look at the most standard properties to see what a typical renter can expect to pay:
+mean(abBrookNO$price)
+median(abBrookNO$price)
+quantile(abBrookNO$price)
+#It looks like the usual trip budget should be about $100 a night. For travelers willing to stay outside the properties noted above, you can save about $50 a night!
+```
+
+```{r}
+#Now lets see how hosts are classified. 
+abBrookFull %>% ggplot() + geom_histogram(aes(x=host_id), bins = 25, color = "black", fill = "pink")
+abBrookNO %>% ggplot() + geom_histogram(aes(x=host_id), bins = 25, color = "black", fill = "pink")
+```
+
+```{r}
+# There are certainly few professionals and few newcomers in the hosts. Interestingly, we can see that there is a relatively large reduction in hosts with lots of properties when we control for outliers. This seems to suggest that our newcomers are missing out on value they could be charging per night! We can use this chart to look for hosts that don't have as many reviews as well:
+abBrookFull %>% group_by(host_id) %>% ggplot(aes(x=host_id,y=number_of_reviews)) + geom_col(color = "black", aes(fill = number_of_reviews))
+```
+
+# Creating a predictive price model for Brooklyn
+```{r}
+#Let's look at number of reviews to price in the standard property list
+ReviewstoPrice <- lm(number_of_reviews ~ price, data = abBrookNO)
+ReviewstoPrice_summary <- summary(ReviewstoPrice)
+ReviewstoPrice_summary$adj.r.squared
+
+#Let's look at number of reviews to price in the standard property list
+priceToReviews <- lm(price ~ number_of_reviews , data = abBrookNO)
+priceToReviews_summary <- summary(priceToReviews)
+priceToReviews_summary$adj.r.squared
+
+ggplot(abBrookNO) + aes(x=price, y= number_of_reviews, color = price) + geom_point() + scale_color_gradient(low = "blue", high = "red") + geom_smooth(color = "yellow")
+
+#Let's look at Room type to price in the standard property list
+priceToRoom <- lm(price ~ room_type , data = abBrookNO)
+priceToRoom_summary <- summary(priceToRoom)
+priceToRoom_summary$adj.r.squared
+
+ggplot(abBrookNO) + aes(x=price, y= room_type, color = price) + geom_point() + scale_color_gradient(low = "blue", high = "red") + geom_smooth(color = "yellow")
+
+# This shows a significant impact of room type on price. now lets add availability_365
+priceToRoomtype_availability <- lm(price ~ room_type + availability_365 , data = abBrookNO)
+priceToRoomtype_availability_summary <- summary(priceToRoomtype_availability)
+priceToRoomtype_availability_summary$adj.r.squared
+
+ggplot(abBrookNO) + aes(x=price, y= availability_365, color = price) + geom_point() + scale_color_gradient(low = "blue", high = "red") + geom_smooth(color = "yellow")
+
+# There is little difference in R value. Lets keep adding more attributes and check the model.
+priceToRoom_avai_list <- lm(price ~ room_type + availability_365 + calculated_host_listings_count , data = abBrookNO)
+priceToRoom_avai_list_summary <- summary(priceToRoom_avai_list)
+priceToRoom_avai_list_summary$adj.r.squared
+
+ggplot(abBrookNO) + aes(x=price, y= calculated_host_listings_count, color = price) + geom_point() + scale_color_gradient(low = "blue", high = "red") + geom_smooth(color = "yellow")
+
+# Again very little improvement. Lets add minimum_nights
+priceToRoom_avai_list_nights <- lm(price ~ room_type + availability_365 + calculated_host_listings_count + minimum_nights , data = abBrookNO)
+priceToRoom_avai_list_nights_summary <- summary(priceToRoom_avai_list_nights)
+priceToRoom_avai_list_nights_summary$adj.r.squared
+
+ggplot(abBrookNO) + aes(x=price, y= minimum_nights, color = price) + geom_point() + scale_color_gradient(low = "blue", high = "red") + geom_smooth(color = "yellow")
+
+# Again improved a teeny bit. Now lets add host_id and see if model changes.
+priceToRoom_avai_list_nights_host <- lm(price ~ room_type + availability_365 + calculated_host_listings_count + minimum_nights + host_id, data = abBrookNO)
+priceToRoom_avai_list_nights_host_summary <- summary(priceToRoom_avai_list_nights_host)
+priceToRoom_avai_list_nights_host_summary$adj.r.squared
+
+ggplot(abBrookNO) + aes(x=price, y= host_id, color = price) + geom_point() + scale_color_gradient(low = "blue", high = "red") + geom_smooth(color = "yellow")
+# No difference and infact the host id is not statistically significant as well. 
+
+# We could see from the boxplot that we do have few areas of high prices. So lets see if our model considers that. Let's add neighbourhood
+priceToRoom_avai_list_nights_host_neigh <- lm(price ~ room_type + availability_365 + calculated_host_listings_count + minimum_nights + host_id + neighbourhood, data = abBrookNO)
+priceToRoom_avai_list_nights_host_neigh_summary <- summary(priceToRoom_avai_list_nights_host_neigh)
+priceToRoom_avai_list_nights_host_neigh_summary$adj.r.squared
+
+# Thats great. We have a change in our adjusted R2. This model looks a bit predictable now. Shall we see if the last review matters? Let's add that last_review
+priceToRoom_avai_list_nights_host_neigh_last <- lm(price ~ room_type + availability_365 + calculated_host_listings_count + minimum_nights + host_id + neighbourhood + last_review, data = abBrookNO)
+priceToRoom_avai_list_nights_host_neigh_last_summary <- summary(priceToRoom_avai_list_nights_host_neigh_last)
+priceToRoom_avai_list_nights_host_neigh_last_summary$adj.r.squared
+
+ggplot(abBrookNO) + aes(x=price, y= last_review, color = price) + geom_point() + scale_color_gradient(low = "blue", high = "red") + geom_smooth(color = "yellow")
+
+# This is considerably better We started with 1% variability to nearly 50% in the model. This is great improvement. Now lets take off host_id and run as that is not significant in our model.
+
+priceToRoom_avai_list_nights_nohost_neigh_last <- lm(price ~ room_type + availability_365 + calculated_host_listings_count + minimum_nights + neighbourhood + last_review, data = abBrookNO)
+priceToRoom_avai_list_nights_nohost_neigh_last_summary <- summary(priceToRoom_avai_list_nights_nohost_neigh_last)
+priceToRoom_avai_list_nights_nohost_neigh_last_summary$adj.r.squared
+
+# There is little change. So now lets inspect if we have any variables that are not adding value but burdening the model and remove them. Looks like there are all contributing well to the model. Let see if we can add any other variables. How about number_of_reviews. I know it didnt show an impressive model with price. May be combined with others it might show an impact. lets check it out. 
+priceToRoom_avai_list_nights_nohost_neigh_last_reviews <- lm(price ~ room_type + availability_365 + calculated_host_listings_count + minimum_nights + neighbourhood + last_review + number_of_reviews, data = abBrookNO)
+
+priceToRoom_avai_list_nights_nohost_neigh_last_reviews_summary <- summary(priceToRoom_avai_list_nights_nohost_neigh_last_reviews)
+priceToRoom_avai_list_nights_nohost_neigh_last_reviews_summary$adj.r.squared
+plot(priceToRoom_avai_list_nights_nohost_neigh_last_reviews)
+# Alright, am almost done with my variables so not sure if I can add any. Lets stick to this model. 
+```
+### Now let's look at Manhattan  
+```{r}
+str(airbnb_manhattan)
+summary(airbnb_manhattan)
+```
+
+```{r}
+#Intro viz
+airbnb_manhattan %>% ggplot() + aes(y=price, x= neighbourhood) + geom_point(aes(color = price)) + scale_color_gradient(low = "blue", high = "red") + theme(axis.text.x = element_text(angle = 90, hjust = 1))
+```
+
+```{r}
+#create a variable that eliminates prices over $1000USD a night to eliminate the outlines
+manhattanreasonable <- filter(airbnb_manhattan, price <= 1000)
+
+#based on independent research, the average traveler in NYC attempts to find accommodations under $300 a night, lets create
+#a subset that eliminates all rooms over $300 a night 
+
+manhattantypical <- filter(airbnb_manhattan, price <= 300)
+
+priceQ1 <- quantile(airbnb_manhattan$price, .25)
+priceQ3 <- quantile(airbnb_manhattan$price, .75)
+priceIQR <- IQR(airbnb_manhattan$price)
+manhattanIQR <- subset(airbnb_manhattan, airbnb_manhattan$price > (priceQ1 - 1.5*priceIQR) & airbnb_manhattan$price < (priceQ3 + 1.5*priceIQR)) 
+glimpse(airbnb_manhattan)
+```
+
+```{r}
+#Let's look at our outliers a bit more in detail to understand what's going on here:
+manhattanPricey <- airbnb_manhattan %>% filter(price >= 5000)
+manhattanPricey[,2:15]
+```
+
+```{r}
+#It looks like we have 17 properties listed that are priced a fair amount more than the bulk of the properties in Manhattan. These properties fall into categories previously mentioned where they are either luxury properties (an entire yacht for $7,500 a night!), professional use (photography studio, event space), or non-serious/standard listing with minimum nights of several months or 0 days of availability
+```
+
+```{r}
+#removed outliers and generated historgram by neighborhood
+manhattanIQR %>% ggplot() + aes(y=price, x= neighbourhood) + geom_point(aes(color = price)) + scale_color_gradient(low = "blue", high = "red") + theme(axis.text.x = element_text(angle = 90, hjust = 1))
+```
+
+```{r}
+#boxplot with outliers removed showing prices by neighborhood
+manhattanIQR %>% ggplot() + aes(y=price, x=neighbourhood) + geom_boxplot() + theme(axis.text.x = element_text(angle = 90, hjust = 1))
+```
+```{r}
+#histogram of price by Room type in Manhattan with no outliers removed
+
+airbnb_manhattan %>% ggplot() + aes(y=price, x= room_type) + geom_point(aes(color = price, shape = room_type)) + scale_color_gradient(low = "blue", high = "red") + theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+```{r}
+#histogram of price by Room type in Manhattan with outliers removed
+
+manhattanIQR %>% ggplot() + aes(y=price, x= room_type) + geom_point(aes(color = price, shape = room_type)) + scale_color_gradient(low = "blue", high = "red") + theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+```{r}
+#explore price of properties across Manhattan
+
+mean(airbnb_manhattan$price)
+quantile(airbnb_manhattan$price)
+median(airbnb_manhattan$price)
+```
+
+```{r}
+# explore host mix in Manhattan with reviews
+airbnb_manhattan %>% group_by(host_id) %>% ggplot(aes(x=host_id,y=number_of_reviews)) + geom_col(color = "black", aes(fill = number_of_reviews))
+```
+```{r}
+#explore host mix in manhattan based on listings
+airbnb_manhattan %>% ggplot() + geom_histogram(aes(x=host_id), bins = 25, color = "black", fill = "pink")
+```
+
+
+# Creating a predictive price model for Manhattan
+```{r}
+#Let's look at number of reviews to price in the standard property list
+ReviewstoPrice <- lm(number_of_reviews ~ price, data = manhattanIQR)
+ReviewstoPrice_summary <- summary(ReviewstoPrice)
+ReviewstoPrice_summary$adj.r.squared
+
+# Does not give any intuitive results. Lets try the other way round
+
+#Let's look at number of reviews to price in the standard property list
+priceToReviews <- lm(price ~ number_of_reviews , data = manhattanIQR)
+priceToReviews_summary <- summary(priceToReviews)
+priceToReviews_summary$adj.r.squared
+ 
+
+ggplot(manhattanIQR) + aes(x=price, y= number_of_reviews, color = price) + geom_point() + scale_color_gradient(low = "blue", high = "red") + geom_smooth(color = "yellow")
+
+# No difference. 
+
+#Let's look at Room type to price in the standard property list
+priceToRoom <- lm(price ~ room_type , data = manhattanIQR)
+priceToRoom_summary <- summary(priceToRoom)
+priceToRoom_summary$adj.r.squared
+
+ggplot(manhattanIQR) + aes(x=price, y= room_type, color = price) + geom_point() + scale_color_gradient(low = "blue", high = "red") + geom_smooth(color = "yellow")
+
+# This shows a significant impact of room type on price. now lets add availability_365
+priceToRoomtype_availability <- lm(price ~ room_type + availability_365 , data = manhattanIQR)
+priceToRoomtype_availability_summary <- summary(priceToRoomtype_availability)
+priceToRoomtype_availability_summary$adj.r.squared
+
+ggplot(manhattanIQR) + aes(x=price, y= availability_365, color = price) + geom_point() + scale_color_gradient(low = "blue", high = "red") + geom_smooth(color = "yellow")
+
+# There is little difference in R value. Lets keep adding more attributes and check the model.
+
+priceToRoom_avai_list <- lm(price ~ room_type + availability_365 + calculated_host_listings_count , data = manhattanIQR)
+priceToRoom_avai_list_summary <- summary(priceToRoom_avai_list)
+priceToRoom_avai_list_summary$adj.r.squared
+
+ggplot(manhattanIQR) + aes(x=price, y= calculated_host_listings_count, color = price) + geom_point() + scale_color_gradient(low = "blue", high = "red") + geom_smooth(color = "yellow")
+
+# Again very little improvement. Lets add minimum_nights
+
+priceToRoom_avai_list_nights <- lm(price ~ room_type + availability_365 + calculated_host_listings_count + minimum_nights , data = manhattanIQR)
+priceToRoom_avai_list_nights_summary <- summary(priceToRoom_avai_list_nights)
+priceToRoom_avai_list_nights_summary$adj.r.squared
+
+ggplot(manhattanIQR) + aes(x=price, y= minimum_nights, color = price) + geom_point() + scale_color_gradient(low = "blue", high = "red") + geom_smooth(color = "yellow")
+
+# Again improved a teeny bit. Now lets add host_id and see if model changes.
+
+priceToRoom_avai_list_nights_host <- lm(price ~ room_type + availability_365 + calculated_host_listings_count + minimum_nights + host_id, data = manhattanIQR)
+priceToRoom_avai_list_nights_host_summary <- summary(priceToRoom_avai_list_nights_host)
+priceToRoom_avai_list_nights_host_summary$adj.r.squared
+
+ggplot(manhattanIQR) + aes(x=price, y= host_id, color = price) + geom_point() + scale_color_gradient(low = "blue", high = "red") + geom_smooth(color = "yellow")
+
+# No difference and infact the host id is not statistically significant as well. 
+# We could see from the boxplot that we do have few areas of high prices. So lets see if our model considers that. Lets add neighbourhood
+
+priceToRoom_avai_list_nights_host_neigh <- lm(price ~ room_type + availability_365 + calculated_host_listings_count + minimum_nights + host_id + neighbourhood, data = manhattanIQR)
+priceToRoom_avai_list_nights_host_neigh_summary <- summary(priceToRoom_avai_list_nights_host_neigh)
+priceToRoom_avai_list_nights_host_neigh_summary$adj.r.squared
+
+
+# That's great. We have a change in our adjusted R2. This model looks a bit predictable now. Shall we see if the last review matters? Let's add that last_review
+
+priceToRoom_avai_list_nights_host_neigh_last <- lm(price ~ room_type + availability_365 + calculated_host_listings_count + minimum_nights + host_id + neighbourhood + last_review, data = manhattanIQR)
+priceToRoom_avai_list_nights_host_neigh_last_summary <- summary(priceToRoom_avai_list_nights_host_neigh_last)
+priceToRoom_avai_list_nights_host_neigh_last_summary$adj.r.squared
+
+ggplot(manhattanIQR) + aes(x=price, y= last_review, color = price) + geom_point() + scale_color_gradient(low = "blue", high = "red") + geom_smooth(color = "yellow")
+
+# This is considerably better We started with 1% variability to nearly 30% in the model. This is great improvement. Now lets take off host_id and run as that is not significant in our model.
+# Though our model shows less variability compared to other boroughs 
+
+ 
+
+priceToRoom_avai_list_nights_nohost_neigh_last <- lm(price ~ room_type + availability_365 + calculated_host_listings_count + minimum_nights + neighbourhood + last_review, data = manhattanIQR)
+priceToRoom_avai_list_nights_nohost_neigh_last_summary <- summary(priceToRoom_avai_list_nights_nohost_neigh_last)
+priceToRoom_avai_list_nights_nohost_neigh_last_summary$adj.r.squared
+
+ 
+
+# There is little change. So now lets inspect if we have any variables that are not adding value but burdening the model and remove them. Looks like there are all contributing well to the model. Let see if we can add any other variables. How about number_of_reviews. I know it didn't show an impressive model with price. May be combined with others it might show an impact. lets check it out. 
+
+priceToRoom_avai_list_nights_nohost_neigh_last_reviews <- lm(price ~ room_type + availability_365 + calculated_host_listings_count + minimum_nights + neighbourhood + last_review + number_of_reviews, data = manhattanIQR)
+
+
+priceToRoom_avai_list_nights_nohost_neigh_last_reviews_summary <- summary(priceToRoom_avai_list_nights_nohost_neigh_last_reviews)
+priceToRoom_avai_list_nights_nohost_neigh_last_reviews_summary$adj.r.squared
+plot(priceToRoom_avai_list_nights_nohost_neigh_last_reviews)
+
+# Alright, am almost done with my variables so not sure if I can add any. Lets stick to this model. 
+```
+
+### Now let's look at the Bronx
+```{r}
+str(AB_NYC_2019.Bronx)
+summary(AB_NYC_2019.Bronx)
+```
+
+```{r}
+AB_NYC_2019.Bronx %>% ggplot() + aes(y=price, x= neighbourhood) + geom_point(aes(color = price)) + scale_color_gradient(low = "blue", high = "red") + theme(axis.text.x = element_text(angle = 90, hjust = 1))
+```
+```{r}
+#Let's look at our outliers a bit more in detail to understand what's going on here:
+bronxPricey <- filter(AB_NYC_2019.Bronx, price == 2500)
+bronxPricey[,2:15]
+```
+
+```{r}
+#We have a single property in the Riverdale neighborhood that is more than double the price of any other property in the Bronx. This appears to be a luxury rental.
+```
+
+```{r}
+#for the most part the prices are clustered around the mean but we have one very expensive outlier in the Riverdale neighborhood. Lets delete the outlier and check out the results
+AB_NYC_2019.Bronx1 <- filter(AB_NYC_2019.Bronx, price !=2500)
+AB_NYC_2019.Bronx1 %>% ggplot() + aes(y=price, x= neighbourhood) + geom_point(aes(color = price)) + scale_color_gradient(low = "blue", high = "red") + theme(axis.text.x = element_text(angle = 90, hjust = 1))
+AB_NYC_2019.Bronx1 %>% ggplot() + aes(y=price, x=neighbourhood) + geom_boxplot() + theme(axis.text.x = element_text(angle = 90, hjust = 1))
+```
+
+```{r}
+#Next we will show how these prices break down by room type
+AB_NYC_2019.Bronx %>% ggplot() + aes(y=price, x= room_type) + geom_point(aes(color = price, shape = room_type)) + scale_color_gradient(low = "blue", high = "red") + theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+```{r}
+# then we will eliminate the outlier in Private room
+AB_NYC_2019.Bronx1 %>% ggplot() + aes(y=price, x= room_type) + geom_point(aes(color = price, shape = room_type)) + scale_color_gradient(low = "blue", high = "red") + theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+```{r}
+#for the most part the prices are clustered around the mean but we have one very expensive outlier in the private room section
+
+#lets check out the measures of central tendency and the spread of info 
+mean(AB_NYC_2019.Bronx$price)
+median(AB_NYC_2019.Bronx$price)
+mean(AB_NYC_2019.Bronx1$price)
+median(AB_NYC_2019.Bronx1$price)
+sd(AB_NYC_2019.Bronx1$price)
+var(AB_NYC_2019.Bronx1$price)
+quantile(AB_NYC_2019.Bronx1$price)
+```
+
+```{r}
+# The shared room costs less and has fewer plots compared to Entire home/apt. Now lets see how hosts are classified. 
+AB_NYC_2019.Bronx %>% ggplot() + geom_histogram(aes(x=host_id), bins = 25, color = "black", fill = "pink")
+```
+
+```{r}
+# There are certainly few professionals and few newcomers in the hosts. We can use this chart to look for hosts that needs help.
+AB_NYC_2019.Bronx %>% group_by(host_id) %>% ggplot(aes(x=host_id,y=number_of_reviews)) + geom_col(color = "black", aes(fill = number_of_reviews))
+```
+# Creating a predictive price model for Bronx
+```{r}
+#Let's look at number of reviews to price in the standard property list
+ReviewstoPrice <- lm(number_of_reviews ~ price, data = AB_NYC_2019.Bronx)
+ReviewstoPrice_summary <- summary(ReviewstoPrice)
+ReviewstoPrice_summary$adj.r.squared
+
+# Does not give any intuitive results. Lets try the other way round
+
+#Let's look at number of reviews to price in the standard property list
+priceToReviews <- lm(price ~ number_of_reviews , data = AB_NYC_2019.Bronx)
+priceToReviews_summary <- summary(priceToReviews)
+priceToReviews_summary$adj.r.squared
+
+ggplot(AB_NYC_2019.Bronx) + aes(x=price, y= number_of_reviews, color = price) + geom_point() + scale_color_gradient(low = "blue", high = "red") + geom_smooth(color = "yellow")
+
+# No difference. 
+
+#Let's look at Room type to price in the standard property list
+priceToRoom <- lm(price ~ room_type , data = AB_NYC_2019.Bronx)
+priceToRoom_summary <- summary(priceToRoom)
+priceToRoom_summary$adj.r.squared
+
+ggplot(AB_NYC_2019.Bronx) + aes(x=price, y= room_type, color = price) + geom_point() + scale_color_gradient(low = "blue", high = "red") + geom_smooth(color = "yellow")
+
+# This shows a significant impact of room type on price. now lets add availability_365
+priceToRoomtype_availability <- lm(price ~ room_type + availability_365 , data = AB_NYC_2019.Bronx)
+priceToRoomtype_availability_summary <- summary(priceToRoomtype_availability)
+priceToRoomtype_availability_summary$adj.r.squared
+
+ggplot(AB_NYC_2019.Bronx) + aes(x=price, y= availability_365, color = price) + geom_point() + scale_color_gradient(low = "blue", high = "red") + geom_smooth(color = "yellow")
+
+# There is little difference in R value. Lets keep adding more attributes and check the model.
+
+priceToRoom_avai_list <- lm(price ~ room_type + availability_365 + calculated_host_listings_count , data = AB_NYC_2019.Bronx)
+priceToRoom_avai_list_summary <- summary(priceToRoom_avai_list)
+priceToRoom_avai_list_summary$adj.r.squared
+
+ggplot(AB_NYC_2019.Bronx) + aes(x=price, y= calculated_host_listings_count, color = price) + geom_point() + scale_color_gradient(low = "blue", high = "red") + geom_smooth(color = "yellow")
+
+# Again very little improvement. Lets add minimum_nights
+
+priceToRoom_avai_list_nights <- lm(price ~ room_type + availability_365 + calculated_host_listings_count + minimum_nights , data = AB_NYC_2019.Bronx)
+priceToRoom_avai_list_nights_summary <- summary(priceToRoom_avai_list_nights)
+priceToRoom_avai_list_nights_summary$adj.r.squared
+
+ggplot(AB_NYC_2019.Bronx) + aes(x=price, y= minimum_nights, color = price) + geom_point() + scale_color_gradient(low = "blue", high = "red") + geom_smooth(color = "yellow")
+
+# Again improved a teeny bit. Now lets add host_id and see if model changes.
+
+priceToRoom_avai_list_nights_host <- lm(price ~ room_type + availability_365 + calculated_host_listings_count + minimum_nights + host_id, data = AB_NYC_2019.Bronx)
+priceToRoom_avai_list_nights_host_summary <- summary(priceToRoom_avai_list_nights_host)
+priceToRoom_avai_list_nights_host_summary$adj.r.squared
+
+ggplot(AB_NYC_2019.Bronx) + aes(x=price, y= host_id, color = price) + geom_point() + scale_color_gradient(low = "blue", high = "red") + geom_smooth(color = "yellow")
+
+# No difference and in fact the host id is not statistically significant as well. 
+# We could see from the boxplot that we do have few areas of high prices. So lets see if our model considers that. Lets add neighborhood
+
+priceToRoom_avai_list_nights_host_neigh <- lm(price ~ room_type + availability_365 + calculated_host_listings_count + minimum_nights + host_id + neighbourhood, data = AB_NYC_2019.Bronx)
+priceToRoom_avai_list_nights_host_neigh_summary <- summary(priceToRoom_avai_list_nights_host_neigh)
+priceToRoom_avai_list_nights_host_neigh_summary$adj.r.squared
+
+# Thats great. We have a change in our adjusted R2. This model looks a bit predictable now. Shall we see if the last review matters? Let's add that last_review
+
+priceToRoom_avai_list_nights_host_neigh_last <- lm(price ~ room_type + availability_365 + calculated_host_listings_count + minimum_nights + host_id + neighbourhood + last_review, data = AB_NYC_2019.Bronx)
+priceToRoom_avai_list_nights_host_neigh_last_summary <- summary(priceToRoom_avai_list_nights_host_neigh_last)
+priceToRoom_avai_list_nights_host_neigh_last_summary$adj.r.squared
+
+ggplot(AB_NYC_2019.Bronx) + aes(x=price, y= last_review, color = price) + geom_point() + scale_color_gradient(low = "blue", high = "red") + geom_smooth(color = "yellow")
+
+# This is considerably better We started with 1% variablity to nearly 50% in the model. This is great improvement. Now lets take off host_id and run as that is not significant in our model.
+
+priceToRoom_avai_list_nights_nohost_neigh_last <- lm(price ~ room_type + availability_365 + calculated_host_listings_count + minimum_nights + neighbourhood + last_review, data = AB_NYC_2019.Bronx)
+priceToRoom_avai_list_nights_nohost_neigh_last_summary <- summary(priceToRoom_avai_list_nights_nohost_neigh_last)
+priceToRoom_avai_list_nights_nohost_neigh_last_summary$adj.r.squared
+
+# There is little change. So now lets inspect if we have any variables that are not adding value but burdening the model and remove them. Looks like there are all contributing well to the model. Let see if we can add any other variables. How about number_of_reviews. I know it didn't show an impressive model with price. May be combined with others it might show an impact. lets check it out. 
+
+priceToRoom_avai_list_nights_nohost_neigh_last_reviews <- lm(price ~ room_type + availability_365 + calculated_host_listings_count + minimum_nights + neighbourhood + last_review + number_of_reviews, data = AB_NYC_2019.Bronx)
+
+
+priceToRoom_avai_list_nights_nohost_neigh_last_reviews_summary <- summary(priceToRoom_avai_list_nights_nohost_neigh_last_reviews)
+priceToRoom_avai_list_nights_nohost_neigh_last_reviews_summary$adj.r.squared
+plot(priceToRoom_avai_list_nights_nohost_neigh_last_reviews)
+
+# Alright, am almost done with my variables so not sure if I can add any. Lets stick to this model. 
+```
+  
+### Now let's look at Staten Island:
+```{r}
+summary(AB_NYC_2019.Staten)
+str(AB_NYC_2019.Staten)
+```
+
+```{r}
+# Now we will show a plot displaying the various prices broken down by neighborhood.
+AB_NYC_2019.Staten %>% ggplot() + aes(y=price, x= neighbourhood) + geom_point(aes(color = price)) + scale_color_gradient(low = "blue", high = "red") + theme(axis.text.x = element_text(angle = 90, hjust = 1))
+```
+```{r}
+#Let's look at our outliers a bit more in detail to understand what's going on here:
+statenPricey <- filter(AB_NYC_2019.Staten, price >= 1000)
+statenPricey[,2:15]
+```
+
+```{r}
+#We have three properties that run more than $1000 a night that appear to fall in the luxury or professional use categories noted previously.
+```
+
+```{r}
+#for the most part the prices are clustered around the mean but we have one very expensive outlier. Lets remove it and see what happens 
+AB_NYC_2019.Staten1 <- filter(AB_NYC_2019.Staten, price !=5000)
+AB_NYC_2019.Staten1 %>% ggplot() + aes(y=price, x= neighbourhood) + geom_point(aes(color = price)) + scale_color_gradient(low = "blue", high = "red") + theme(axis.text.x = element_text(angle = 90, hjust = 1))
+```
+
+```{r}
+#Next we will show how these prices break down by room type
+AB_NYC_2019.Staten %>% ggplot() + aes(y=price, x= room_type) + geom_point(aes(color = price, shape = room_type)) + scale_color_gradient(low = "blue", high = "red") + theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+```{r}
+#for the most part the prices are clustered around the mean but we have one very expensive outlier in the entire home section. Here is the layout without the outlier
+AB_NYC_2019.Staten1 %>% ggplot() + aes(y=price, x= room_type) + geom_point(aes(color = price, shape = room_type)) + scale_color_gradient(low = "blue", high = "red") + theme(axis.text.x = element_text(angle = 45, hjust = 1))
+AB_NYC_2019.Staten1 %>% ggplot() + aes(y=price, x=neighbourhood) + geom_boxplot() + theme(axis.text.x = element_text(angle = 90, hjust = 1))
+```
+
+```{r}
+#lets check out the measures of central tendency and the spread of info 
+mean(AB_NYC_2019.Staten$price)
+median(AB_NYC_2019.Staten$price)
+mean(AB_NYC_2019.Staten$price)
+median(AB_NYC_2019.Staten$price)
+sd(AB_NYC_2019.Staten$price)
+var(AB_NYC_2019.Staten$price)
+quantile(AB_NYC_2019.Staten$price)
+```
+
+```{r}
+# The shared room costs less and has fewer plots compared to Entire home/apt. Now lets see how hosts are classified. 
+AB_NYC_2019.Staten %>% ggplot() + geom_histogram(aes(x=host_id), bins = 25, color = "black", fill = "pink")
+```
+
+```{r}
+# There are certainly few professionals and few newcomers in the hosts. We can use this chart to look for hosts that needs help.
+AB_NYC_2019.Staten %>% group_by(host_id) %>% ggplot(aes(x=host_id,y=number_of_reviews)) + geom_col(color = "black", aes(fill = number_of_reviews))
+```
+# Creating a predictive price model for Staten Island
+```{r}
+#Let's look at number of reviews to price in the standard property list
+ReviewstoPrice <- lm(number_of_reviews ~ price, data = AB_NYC_2019.Staten)
+ReviewstoPrice_summary <- summary(ReviewstoPrice)
+ReviewstoPrice_summary$adj.r.squared
+
+# Does not give any intuitive results. Lets try the other way round
+
+#Let's look at number of reviews to price in the standard property list
+priceToReviews <- lm(price ~ number_of_reviews , data = AB_NYC_2019.Staten)
+priceToReviews_summary <- summary(priceToReviews)
+priceToReviews_summary$adj.r.squared
+
+ggplot(AB_NYC_2019.Staten) + aes(x=price, y= number_of_reviews, color = price) + geom_point() + scale_color_gradient(low = "blue", high = "red") + geom_smooth(color = "yellow")
+
+# No difference. 
+
+ 
+
+#Let's look at Room type to price in the standard property list
+priceToRoom <- lm(price ~ room_type , data = AB_NYC_2019.Staten)
+priceToRoom_summary <- summary(priceToRoom)
+priceToRoom_summary$adj.r.squared
+
+ggplot(AB_NYC_2019.Staten) + aes(x=price, y= room_type, color = price) + geom_point() + scale_color_gradient(low = "blue", high = "red") + geom_smooth(color = "yellow")
+
+# This shows a significant impact of room type on price. now lets add availability_365
+priceToRoomtype_availability <- lm(price ~ room_type + availability_365 , data = AB_NYC_2019.Staten)
+priceToRoomtype_availability_summary <- summary(priceToRoomtype_availability)
+priceToRoomtype_availability_summary$adj.r.squared
+ 
+
+ggplot(AB_NYC_2019.Staten) + aes(x=price, y= availability_365, color = price) + geom_point() + scale_color_gradient(low = "blue", high = "red") + geom_smooth(color = "yellow")
+ 
+
+# There is little difference in R value. Lets keep adding more attributes and check the model.
+ 
+
+priceToRoom_avai_list <- lm(price ~ room_type + availability_365 + calculated_host_listings_count , data = AB_NYC_2019.Staten)
+priceToRoom_avai_list_summary <- summary(priceToRoom_avai_list)
+priceToRoom_avai_list_summary$adj.r.squared
+
+
+ggplot(AB_NYC_2019.Staten) + aes(x=price, y= calculated_host_listings_count, color = price) + geom_point() + scale_color_gradient(low = "blue", high = "red") + geom_smooth(color = "yellow")
+
+# Again very little improvement. Lets add minimum_nights
+
+priceToRoom_avai_list_nights <- lm(price ~ room_type + availability_365 + calculated_host_listings_count + minimum_nights , data = AB_NYC_2019.Staten)
+priceToRoom_avai_list_nights_summary <- summary(priceToRoom_avai_list_nights)
+priceToRoom_avai_list_nights_summary$adj.r.squared
+
+ 
+
+ggplot(AB_NYC_2019.Staten) + aes(x=price, y= minimum_nights, color = price) + geom_point() + scale_color_gradient(low = "blue", high = "red") + geom_smooth(color = "yellow")
+
+# Again improved a teeny bit. Now lets add host_id and see if model changes.
+
+ 
+
+
+priceToRoom_avai_list_nights_host <- lm(price ~ room_type + availability_365 + calculated_host_listings_count + minimum_nights + host_id, data = AB_NYC_2019.Staten)
+priceToRoom_avai_list_nights_host_summary <- summary(priceToRoom_avai_list_nights_host)
+priceToRoom_avai_list_nights_host_summary$adj.r.squared
+
+ggplot(AB_NYC_2019.Staten) + aes(x=price, y= host_id, color = price) + geom_point() + scale_color_gradient(low = "blue", high = "red") + geom_smooth(color = "yellow")
+ 
+
+# No difference and in fact the host id is not statistically significant as well. 
+# We could see from the boxplot that we do have few areas of high prices. So lets see if our model considers that. Lets add neighborhood
+
+ 
+
+priceToRoom_avai_list_nights_host_neigh <- lm(price ~ room_type + availability_365 + calculated_host_listings_count + minimum_nights + host_id + neighbourhood, data = AB_NYC_2019.Staten)
+priceToRoom_avai_list_nights_host_neigh_summary <- summary(priceToRoom_avai_list_nights_host_neigh)
+priceToRoom_avai_list_nights_host_neigh_summary$adj.r.squared
+
+
+# That's great. We have a change in our adjusted R2. This model looks a bit predictable now. Shall we see if the last review matters? Let's add that last_review
+
+ 
+
+priceToRoom_avai_list_nights_host_neigh_last <- lm(price ~ room_type + availability_365 + calculated_host_listings_count + minimum_nights + host_id + neighbourhood + last_review, data = AB_NYC_2019.Staten)
+priceToRoom_avai_list_nights_host_neigh_last_summary <- summary(priceToRoom_avai_list_nights_host_neigh_last)
+priceToRoom_avai_list_nights_host_neigh_last_summary$adj.r.squared
+
+
+ggplot(AB_NYC_2019.Staten) + aes(x=price, y= last_review, color = price) + geom_point() + scale_color_gradient(low = "blue", high = "red") + geom_smooth(color = "yellow")
+
+ 
+
+# This is considerably better, We started with 1% variability to nearly 41% in the model. This is great improvement. Now lets take off host_id and run as that is not significant in our model.
+
+ 
+
+priceToRoom_avai_list_nights_nohost_neigh_last <- lm(price ~ room_type + availability_365 + calculated_host_listings_count + minimum_nights + neighbourhood + last_review, data = AB_NYC_2019.Staten)
+priceToRoom_avai_list_nights_nohost_neigh_last_summary <- summary(priceToRoom_avai_list_nights_nohost_neigh_last)
+priceToRoom_avai_list_nights_nohost_neigh_last_summary$adj.r.squared
+
+# There is little change. So now lets inspect if we have any variables that are not adding value but burdening the model and remove them. Looks like there are all contributing well to the model. Let see if we can add any other variables. How about number_of_reviews. I know it didn't show an impressive model with price. May be combined with others it might show an impact. lets check it out. 
+ 
+
+priceToRoom_avai_list_nights_nohost_neigh_last_reviews <- lm(price ~ room_type + availability_365 + calculated_host_listings_count + minimum_nights + neighbourhood + last_review + number_of_reviews, data = AB_NYC_2019.Staten)
+
+
+priceToRoom_avai_list_nights_nohost_neigh_last_reviews_summary <- summary(priceToRoom_avai_list_nights_nohost_neigh_last_reviews)
+priceToRoom_avai_list_nights_nohost_neigh_last_reviews_summary$adj.r.squared
+plot(priceToRoom_avai_list_nights_nohost_neigh_last_reviews)
+
+ 
+
+
+# Alright, am almost done with my variables so not sure if I can add any. Lets stick to this model. 
+```
+
+## 6) Data Analysis  
+### 6.1) Price Predicative Model/descision tress for entire NYC by grouping the prices into 2 categories of Low, Medium and High to show the tree structure.
+
+```{r}
+temp1 <- sort.int(airbnb$price, decreasing = FALSE)
+first1 <- temp1[round(length(temp1)/3, digits = 0)]
+second1 <- temp1[2*round(length(temp1)/3, digits = 0)]
+#airbnb$price_level <- as.character(airbnb$price_level)
+airbnb$price_level[airbnb$price <= first1] <- "Low"
+airbnb$price_level[airbnb$price > first1 & airbnb$price <= second1] <- "Medium"
+airbnb$price_level[airbnb$price > second1] <- "High"
+
+airbnb$price_level <- as.factor(airbnb$price_level)
+Nyc_air <- data.frame(Host=airbnb$host_id, 
+                   neighbourhood_group=as.factor(airbnb$neighbourhood_group), 
+                   availability365=airbnb$availability_365, 
+                   price_level=airbnb$price_level, 
+                   roomtype=as.factor(airbnb$room_type), 
+                   minimum_nights=airbnb$minimum_nights, 
+                   number_of_reviews=airbnb$number_of_reviews, 
+                   calculated_host_listings_count=airbnb$calculated_host_listings_count)
+#Nyc.rpart <- rpart(price_level ~ . , data = Nyc, method = 'class', control = rpart.control(maxdepth= 4))
+Nyc.air.rpart <- rpart(price_level ~ neighbourhood_group + roomtype + number_of_reviews + calculated_host_listings_count, data = Nyc_air, method = 'class', control = rpart.control(maxdepth= 4))
+rpart.plot(Nyc.air.rpart)
+summary(Nyc_air)
+```
+
+### 6.2) Price vs Location and Price vs Room Type Analysis  
+
+```{r}
+
+#let's also look at some heatmaps to see if we can understand areas of opportunity to find additional hosts. We'll start by looking at the entirety of the city
+Nyc <- c(left = min(airbnb$longitude), bottom = min(airbnb$latitude), right = max(airbnb$longitude), top = max(airbnb$latitude))
+mapNyc <- get_stamenmap(bbox = Nyc, zoom=12)
+
+ggmap(mapNyc) + geom_point(data=airbnb, alpha=0.5, size=.5, aes(x=longitude, y=latitude, color=price)) + scale_color_gradient(low = "blue", high = "red")
+#This isn't too helpful. Why don't we zoom in on just one burough and see if we can visualize something more useful.
+```
+  
+#### Let's start with Queens.  
+```{r}
+QueensNyc <- c(left = min(Queens$longitude), bottom = min(Queens$latitude), right = max(Queens$longitude), top = max(Queens$latitude))
+Queensmap <- get_stamenmap(bbox = QueensNyc, zoom=12)
+ggmap(Queensmap) + geom_point(data=Queens, alpha=0.5, size=.5, aes(x=longitude, y=latitude, color=price)) + scale_color_gradient(low = "blue", high = "red")
+
+
+#this is a lot more beneficial. We can see the majority of properties focus on the NW side of the borough. It might be worth exploring opportunities and demand for rentals on the south side of the borough, particularly close to any subway stops. One weakness are the pricing of the very expensive properties skew most of the points to blue. Why don't we adjust for the outliers to see if we can see pricing trends across the borough.
+
+ggmap(Queensmap) + geom_point(data=QueensNO2, alpha=0.5, size=.5, aes(x=longitude, y=latitude, color=price)) + scale_color_gradient(low = "blue", high = "red")
+
+# This shows no much difference. 
+
+# looking at the IQR.
+
+ggmap(Queensmap) + geom_point(data=Queensno, alpha=0.5, size=.5, aes(x=longitude, y=latitude, color=price)) + scale_color_gradient(low = "blue", high = "red")
+
+```
+  
+#### Now let's look at Manhattan  
+```{r}
+manhattanBB <- c(left = min(airbnb_manhattan$longitude), bottom = min(airbnb_manhattan$latitude), right = max(airbnb_manhattan$longitude), top = max(airbnb_manhattan$latitude))
+manhattanMap <- get_stamenmap(bbox = manhattanBB, zoom=12)
+ggmap(manhattanMap) + geom_point(data=airbnb_manhattan, alpha=0.5, size=.5, aes(x=longitude, y=latitude, color=price)) + scale_color_gradient(low = "blue", high = "red")
+
+
+#This is a bit more beneficial, however, the extreme outliers in Manhattan skew the heat map to blue. Let's look at the more typical property.
+
+ggmap(manhattanMap) + geom_point(data=manhattanIQR, alpha=0.5, size=.5, aes(x=longitude, y=latitude, color=price)) + scale_color_gradient(low = "blue", high = "red")
+
+```
+  
+#### Now let's look at Brooklyn. 
+```{r}
+bbBrook <- c(left = min(abBrookFull$longitude), bottom = min(abBrookFull$latitude), right = max(abBrookFull$longitude), top = max(abBrookFull$latitude))
+mapBrook <- get_stamenmap(bbox = bbBrook, zoom=12)
+ggmap(mapBrook) + geom_point(data=abBrookFull, alpha=0.5, size=.5, aes(x=longitude, y=latitude, color=price)) + scale_color_gradient(low = "blue", high = "red")
+```
+
+```{r}
+#this is a lot more beneficial. We can see the majority of properties focus on the NW side of the borough. It might be worth exploring opportunities and demand for rentals on the south side of the borough, particularly close to any subway stops that would allow visitors to still travel easily. One weakness are the pricing of the very expensive properties skew most of the points to blue. Although we can roughly identify where the 17 pricey properties noted above are. Why don't we adjust for the outliers to see if we can see pricing trends across the borough.
+
+ggmap(mapBrook) + geom_point(data=abBrookNO2, alpha=0.5, size=.5, aes(x=longitude, y=latitude, color=price)) + scale_color_gradient(low = "blue", high = "red")
+```
+
+```{r}
+#This is much more helpful and we can identify that properties close to the water seem to cost more. Let's see if we can draw this assumption out more by looking at the IQR.
+ggmap(mapBrook) + geom_point(data=abBrookNO, alpha=0.5, size=.5, aes(x=longitude, y=latitude, color=price)) + scale_color_gradient(low = "blue", high = "red")
+```
+
+```{r}
+#This reaffirms the trend and we can identify the price ranges across the borough for the typical traveler with this map. For travelers willing to stay a bit further away from the water/Manhattan, and take a bit more time in the Subway, this will probably result in good savings!
+```
+
+#### Let's look at the Bronx now
+
+```{r}
+bbbronx <- c(left = min(AB_NYC_2019.Bronx$longitude), bottom = min(AB_NYC_2019.Bronx$latitude), right = max(AB_NYC_2019.Bronx$longitude), top = max(AB_NYC_2019.Bronx$latitude))
+mapbronx <- get_stamenmap(bbox = bbbronx, zoom=12)
+ggmap(mapbronx) + geom_point(data=AB_NYC_2019.Bronx, alpha=0.5, size=.5, aes(x=longitude, y=latitude, color=price)) + scale_color_gradient(low = "blue", high = "red")
+```
+
+```{r}
+#this is a lot more beneficial. We can see the properties are pretty speadout throughout the Bronx with a small concentration on the southwest side. 
+
+#Lets take a look at removing the outlier
+ggmap(mapbronx) + geom_point(data=AB_NYC_2019.Bronx1, alpha=0.5, size=.5, aes(x=longitude, y=latitude, color=price)) + scale_color_gradient(low = "blue", high = "red")
+#Prices vary no matter what side of the Bronx we choose.
+```
+
+#### Let's look at Staten Island now
+
+```{r}
+#This isn't too helpful. Why don't we zoom in on just one burough and see if we can visualize something more useful.
+bbstaten <- c(left = min(AB_NYC_2019.Staten$longitude), bottom = min(AB_NYC_2019.Staten$latitude), right = max(AB_NYC_2019.Staten$longitude), top = max(AB_NYC_2019.Staten$latitude))
+mapstaten <- get_stamenmap(bbox = bbstaten, zoom=12)
+ggmap(mapstaten) + geom_point(data=AB_NYC_2019.Staten, alpha=0.5, size=.5, aes(x=longitude, y=latitude, color=price)) + scale_color_gradient(low = "blue", high = "red")
+```
+
+```{r}
+#this is a lot more beneficial. We can see the properties are pretty speadout throughout Staten Island with a small concentration on the Northeast side. 
+
+#Lets take a look at removing the outlier
+ggmap(mapstaten) + geom_point(data=AB_NYC_2019.Staten1, alpha=0.5, size=.5, aes(x=longitude, y=latitude, color=price)) + scale_color_gradient(low = "blue", high = "red")
+#Prices vary no matter what side of Staten Island we choose. 
+```
+
+### 6.3) Text Mining  
+#### Now let's  look at some text analysis to see if we can find common themes that might be mentioned in properties as a whole, and see if we can find ways to help owners find ways to improve their marketing. Given that each borough has it's own amenities and attractions, we will divide this to look at each borough individually.  
+##### Let's start with Brooklyn
+```{r}
+nameCorpus <- corpus(abBrookFull$name, docnames=abBrookFull$ID)
+nameToken <- tokens(nameCorpus, remove_punct = TRUE)
+nameToken <- tokens_select(nameToken, stopwords('english'),selection='remove')
+nameToken <- tokens_tolower(nameToken, keep_acronyms = FALSE)
+nameDtm <- dfm(nameToken)
+textplot_wordcloud(nameDtm, min_count=1)
+```
+
+```{r}
+#We can start to see some themes here - a lot of owners like to talk about privacy, comfort, space, and the Williamsburg neighborhood. Let's see if we can compare this to properties with many reviews to see if we can draw out common themes.
+boxplot(abBrookFull$number_of_reviews)
+```
+
+```{r}
+#We can see from this plot that that most properties don't have too many reviews. Let's zoom in on the properties with more reviews.
+abBrookPop <- abBrookFull %>% filter(number_of_reviews > 75)
+glimpse(abBrookPop)
+```
+
+```{r}
+popNameCorpus <- corpus(abBrookPop$name, docnames=abBrookPop$ID)
+popNameToken <- tokens(popNameCorpus, remove_punct = TRUE, remove_numbers = TRUE, remove_symbols = TRUE)
+popNameToken <- tokens_select(popNameToken, stopwords('english'),selection='remove')
+popNameToken <- tokens_tolower(popNameToken, keep_acronyms = FALSE)
+popNameDtm <- dfm(popNameToken)
+textplot_wordcloud(popNameDtm, min_count=1)
+```
+
+```{r}
+#we can see here that owners who really emphasize the privacy of their rentals appear to attract more tenants. Additionally, tenants seem to really appreciate the charm of brownstone properties, and this may provide some additional insight for owners looking to expand their investment opportunities. Many other high level themes remain consistent, and it's worth noting that access to Williamsburg remains a draw for tenants. We can look at this more quantitatively:
+head(textstat_frequency(nameDtm), 10)
+head(textstat_frequency(popNameDtm), 10)
+```
+
+```{r}
+#Why don't we look at some linear modeling to see if particular themes could draw more reviews (again, used as a proxy for popular listings). Let's start by creating a data frame with topics to number of reviews.
+nameTopics <- convert(nameDtm, to = "topicmodels")
+nameModel <- LDA(nameTopics, control = list(alpha = 0.1, seed=c(1:10), nstart=10), k=7)
+predMatrix <- cbind(abBrookFull$reviews_per_month, nameModel@gamma)
+predDf <- as.data.frame(predMatrix)
+colnames(predDf) <- c("reviewNumbers", "Topic1", "Topic2", "Topic3","Topic4", "Topic5", "Topic6", "Topic7")
+```
+
+```{r}
+#Now let's create our model to see if we can identify any trends on topics with the number of reviews.
+reviewNumbersModelFull <- lm(reviewNumbers ~ Topic1 + Topic2 + Topic3 + Topic4 + Topic5 + Topic6, data = predDf)
+summary(reviewNumbersModelFull)
+#Our adjusted R^2 is really small, but it seems some topics are significant! Let's focus particularly on Topic 1 as it has the largest impact along with the highest reliability. This might provide opportunities for owners to increase occupancy with minimal investment! Let's investigate to see if there is any overlapping effect on price!
+```
+
+```{r}
+predPriceMatrix <- cbind(abBrookFull$price, nameModel@gamma)
+predPriceDf <- as.data.frame(predPriceMatrix)
+colnames(predPriceDf) <- c("Price", "Topic1", "Topic2", "Topic3","Topic4", "Topic5", "Topic6", "Topic7")
+priceTopicModel <- lm(Price ~ Topic1 + Topic2 + Topic3 + Topic4 + Topic5 + Topic6, data = predPriceDf)
+summary(priceTopicModel)
+#As before, the adjusted R^2 is very small, however, there is definite overlap in the importance of Topic 1 and 3. Let's investigate these topics further!
+```
+
+```{r}
+#We will create a function in case we need to adjust our topic count or if we want to investigate other topics.
+createTextBarchart <- function(topicNum) {
+  topicDF <- data.frame(importance= exp(nameModel@beta[topicNum, ]), words=nameModel@terms) 
+  #sort / keep the top 10 rows (based on importance) 
+  topWordDF <- arrange(topicDF, desc(importance)) %>% slice(1:10) 
+  #display the most important words in this topic 
+  viz <- ggplot(topWordDF) + aes(x=reorder(words,-importance), y=importance) + geom_col() + xlab(paste0("Words in Topic", topicNum)) + theme(axis.text.x = element_text(angle = 90, hjust = 1)) 
+  return(viz) 
+}
+```
+
+```{r}
+createTextBarchart(1)
+createTextBarchart(3)
+createTextBarchart(4)
+#We can see that topic 1 focuses generally on property comfort and accessibility. Seems like tenants are looking for a quiet place to unwind after spending a day in the chaos of Manhattan! Topics 3 and 4 draw out that travelers also have interests in proximity to a couple of specific neighborhoods in Brooklyn as well. It seems like landlords should really direct highlighting their property's comfort and accessibility to these amenities.
+```
+  
+##### Now let's look at Queens
+```{r}
+nameCorpus <- corpus(Queens$name, docnames=Queens$id)
+nameToken <- tokens(nameCorpus, remove_punct = TRUE)
+nameToken <- tokens_select(nameToken, stopwords('english'),selection='remove')
+nameToken <- tokens_tolower(nameToken, keep_acronyms = FALSE)
+nameDtm <- dfm(nameToken)
+textplot_wordcloud(nameDtm, min_count=1)
+
+#We can start to see some themes here - a lot of owners like to talk about privacy, comfort, space, queens, Astoria neighborhood. But the surprising word is Manhattan in Queens borough. We also see subway, minutes, airport, near etc which shows that most properties are near by some mode of commute accessible. Let's see if we can compare this to properties with many reviews to see if we can draw out common themes.
+boxplot(Queens$number_of_reviews)
+
+head(textstat_frequency(nameDtm), 10)
+
+```
+
+```{r}
+
+nameTopics <- convert(nameDtm, to = "topicmodels")
+nameModel <- LDA(nameTopics, control = list(alpha = 0.1, seed=c(1:10), nstart=10), k=7)
+predMatrix <- cbind(Queens$number_of_reviews, nameModel@gamma)
+predDf <- as.data.frame(predMatrix)
+colnames(predDf) <- c("reviewNumbers", "Topic1", "Topic2", "Topic3","Topic4", "Topic5", "Topic6", "Topic7")
+reviewNumbersModelFull <- lm(reviewNumbers ~ Topic1 + Topic2 + Topic3 + Topic4 + Topic5 + Topic6, data = predDf)
+summary(reviewNumbersModelFull)
+
+predPriceMatrix <- cbind(Queens$price, nameModel@gamma)
+predPriceDf <- as.data.frame(predPriceMatrix)
+colnames(predPriceDf) <- c("Price", "Topic1", "Topic2", "Topic3","Topic4", "Topic5", "Topic6", "Topic7")
+priceTopicModel <- lm(Price ~ Topic1 + Topic2 + Topic3 + Topic4 + Topic5 + Topic6, data = predPriceDf)
+summary(priceTopicModel)
+
+```
+
+```{r}
+#We will create a function in case we need to adjust our topic count or if we want to investigate other topics.
+createTextBarchart <- function(topicNum) {
+  topicDF <- data.frame(importance= exp(nameModel@beta[topicNum, ]), words=nameModel@terms) 
+  #sort / keep the top 10 rows (based on importance) 
+  topWordDF <- arrange(topicDF, desc(importance)) %>% slice(1:10) 
+  #display the most important words in this topic 
+  viz <- ggplot(topWordDF) + aes(x=reorder(words,-importance), y=importance) + geom_col() + xlab(paste0("Words in Topic", topicNum)) + theme(axis.text.x = element_text(angle = 90, hjust = 1)) 
+  return(viz) 
+}
+
+
+createTextBarchart(1)
+createTextBarchart(2)
+createTextBarchart(4)
+createTextBarchart(5)
+createTextBarchart(6)
+```
+  
+##### Now let's look at Manhattan
+```{r}
+nameCorpus <- corpus(airbnb_manhattan$name, docnames=airbnb_manhattan$id)
+nameToken <- tokens(nameCorpus, remove_punct = TRUE)
+nameToken <- tokens_select(nameToken, stopwords('english'),selection='remove')
+nameToken <- tokens_tolower(nameToken, keep_acronyms = FALSE)
+nameDtm <- dfm(nameToken)
+textplot_wordcloud(nameDtm, min_count=1)
+
+#We can start to see some themes here - a lot of owners like to talk about privacy, comfort, space, queens, Astoria neighborhood. But the surprising word is Manhattan in Queens burrow. We also see subway, minutes, airport, near etc which shows that most properties are near by some mode of commute accessibile. Let's see if we can compare this to properties with many reviews to see if we can draw out common themes.
+boxplot(airbnb_manhattan$number_of_reviews)
+
+head(textstat_frequency(nameDtm), 10)
+
+```
+
+```{r}
+
+nameTopics <- convert(nameDtm, to = "topicmodels")
+nameModel <- LDA(nameTopics, control = list(alpha = 0.1, seed=c(1:10), nstart=10), k=7)
+predMatrix <- cbind(airbnb_manhattan$number_of_reviews, nameModel@gamma)
+predDf <- as.data.frame(predMatrix)
+colnames(predDf) <- c("reviewNumbers", "Topic1", "Topic2", "Topic3","Topic4", "Topic5", "Topic6", "Topic7")
+reviewNumbersModelFull <- lm(reviewNumbers ~ Topic1 + Topic2 + Topic3 + Topic4 + Topic5 + Topic6, data = predDf)
+summary(reviewNumbersModelFull)
+
+predPriceMatrix <- cbind(airbnb_manhattan$price, nameModel@gamma)
+predPriceDf <- as.data.frame(predPriceMatrix)
+colnames(predPriceDf) <- c("Price", "Topic1", "Topic2", "Topic3","Topic4", "Topic5", "Topic6", "Topic7")
+priceTopicModel <- lm(Price ~ Topic1 + Topic2 + Topic3 + Topic4 + Topic5 + Topic6, data = predPriceDf)
+summary(priceTopicModel)
+
+```
+
+```{r}
+#We will create a function in case we need to adjust our topic count or if we want to investigate other topics.
+createTextBarchart <- function(topicNum) {
+  topicDF <- data.frame(importance= exp(nameModel@beta[topicNum, ]), words=nameModel@terms) 
+  #sort / keep the top 10 rows (based on importance) 
+  topWordDF <- arrange(topicDF, desc(importance)) %>% slice(1:10) 
+  #display the most important words in this topic 
+  viz <- ggplot(topWordDF) + aes(x=reorder(words,-importance), y=importance) + geom_col() + xlab(paste0("Words in Topic", topicNum)) + theme(axis.text.x = element_text(angle = 90, hjust = 1)) 
+  return(viz) 
+}
+
+
+createTextBarchart(1)
+createTextBarchart(2)
+createTextBarchart(4)
+createTextBarchart(5)
+createTextBarchart(6)
+```
+
+##### Now let's look at the Bronx
+```{r}
+nameCorpus <- corpus(AB_NYC_2019.Bronx$name, docnames=AB_NYC_2019.Bronx$id)
+nameToken <- tokens(nameCorpus, remove_punct = TRUE)
+nameToken <- tokens_select(nameToken, stopwords('english'),selection='remove')
+nameToken <- tokens_tolower(nameToken, keep_acronyms = FALSE)
+nameDtm <- dfm(nameToken)
+textplot_wordcloud(nameDtm, min_count=1)
+
+boxplot(AB_NYC_2019.Bronx$number_of_reviews)
+
+#we can see here that owners who really emphasize the privacy of their rentals appear to attract more tenants, another attraction of the Bronx is Yankee Stadium which is emphasized. Many other high level themes remain consistent. We can look at this more quantitatively:
+
+head(textstat_frequency(nameDtm), 10)
+
+```
+
+```{r}
+
+nameTopics <- convert(nameDtm, to = "topicmodels")
+nameModel <- LDA(nameTopics, control = list(alpha = 0.1, seed=c(1:10), nstart=10), k=7)
+predMatrix <- cbind(AB_NYC_2019.Bronx$number_of_reviews, nameModel@gamma)
+predDf <- as.data.frame(predMatrix)
+colnames(predDf) <- c("reviewNumbers", "Topic1", "Topic2", "Topic3","Topic4", "Topic5", "Topic6", "Topic7")
+reviewNumbersModelFull <- lm(reviewNumbers ~ Topic1 + Topic2 + Topic3 + Topic4 + Topic5 + Topic6, data = predDf)
+summary(reviewNumbersModelFull)
+
+predPriceMatrix <- cbind(AB_NYC_2019.Bronx$price, nameModel@gamma)
+predPriceDf <- as.data.frame(predPriceMatrix)
+colnames(predPriceDf) <- c("Price", "Topic1", "Topic2", "Topic3","Topic4", "Topic5", "Topic6", "Topic7")
+priceTopicModel <- lm(Price ~ Topic1 + Topic2 + Topic3 + Topic4 + Topic5 + Topic6, data = predPriceDf)
+summary(priceTopicModel)
+
+```
+
+```{r}
+#We will create a function in case we need to adjust our topic count or if we want to investigate other topics.
+createTextBarchart <- function(topicNum) {
+  topicDF <- data.frame(importance= exp(nameModel@beta[topicNum, ]), words=nameModel@terms) 
+  #sort / keep the top 10 rows (based on importance) 
+  topWordDF <- arrange(topicDF, desc(importance)) %>% slice(1:10) 
+  #display the most important words in this topic 
+  viz <- ggplot(topWordDF) + aes(x=reorder(words,-importance), y=importance) + geom_col() + xlab(paste0("Words in Topic", topicNum)) + theme(axis.text.x = element_text(angle = 90, hjust = 1)) 
+  return(viz) 
+}
+
+
+createTextBarchart(1)
+createTextBarchart(2)
+createTextBarchart(4)
+createTextBarchart(5)
+createTextBarchart(6)
+```
+  
+##### Now let's look at Staten Island
+```{r}
+nameCorpus <- corpus(AB_NYC_2019.Staten$name, docnames=AB_NYC_2019.Staten$id)
+nameToken <- tokens(nameCorpus, remove_punct = TRUE)
+nameToken <- tokens_select(nameToken, stopwords('english'),selection='remove')
+nameToken <- tokens_tolower(nameToken, keep_acronyms = FALSE)
+nameDtm <- dfm(nameToken)
+textplot_wordcloud(nameDtm, min_count=1)
+
+#Private, ferry, home and cozy stood out in particular. We can look at this more quantitatively:
+
+head(textstat_frequency(nameDtm), 10)
+boxplot(AB_NYC_2019.Staten$number_of_reviews)
+
+head(textstat_frequency(nameDtm), 10)
+#we can see here that owners who really emphasize the privacy of their rentals appear to attract more tenants, another attraction of Staten Island is being close to the ferry which is emphasized.
+```
+
+```{r}
+
+nameTopics <- convert(nameDtm, to = "topicmodels")
+nameModel <- LDA(nameTopics, control = list(alpha = 0.1, seed=c(1:10), nstart=10), k=7)
+predMatrix <- cbind(AB_NYC_2019.Staten$number_of_reviews, nameModel@gamma)
+predDf <- as.data.frame(predMatrix)
+colnames(predDf) <- c("reviewNumbers", "Topic1", "Topic2", "Topic3","Topic4", "Topic5", "Topic6", "Topic7")
+reviewNumbersModelFull <- lm(reviewNumbers ~ Topic1 + Topic2 + Topic3 + Topic4 + Topic5 + Topic6, data = predDf)
+summary(reviewNumbersModelFull)
+
+predPriceMatrix <- cbind(AB_NYC_2019.Staten$price, nameModel@gamma)
+predPriceDf <- as.data.frame(predPriceMatrix)
+colnames(predPriceDf) <- c("Price", "Topic1", "Topic2", "Topic3","Topic4", "Topic5", "Topic6", "Topic7")
+priceTopicModel <- lm(Price ~ Topic1 + Topic2 + Topic3 + Topic4 + Topic5 + Topic6, data = predPriceDf)
+summary(priceTopicModel)
+
+```
+
+```{r}
+#We will create a function in case we need to adjust our topic count or if we want to investigate other topics.
+createTextBarchart <- function(topicNum) {
+  topicDF <- data.frame(importance= exp(nameModel@beta[topicNum, ]), words=nameModel@terms) 
+  #sort / keep the top 10 rows (based on importance) 
+  topWordDF <- arrange(topicDF, desc(importance)) %>% slice(1:10) 
+  #display the most important words in this topic 
+  viz <- ggplot(topWordDF) + aes(x=reorder(words,-importance), y=importance) + geom_col() + xlab(paste0("Words in Topic", topicNum)) + theme(axis.text.x = element_text(angle = 90, hjust = 1)) 
+  return(viz) 
+}
+
+
+createTextBarchart(1)
+createTextBarchart(2)
+createTextBarchart(4)
+createTextBarchart(5)
+createTextBarchart(6)
+```
+
+## 7) Business Recommendations  
+### Let's conclude our analysis by looking back at our questions to see if we can answer them:  
+##### 1) Are there opportunities for owners to clearly improve revenue in the data?  
+  
+  Yes, based on our seasonal analysis, while Airbnb has saw exponential growth in 2019 the obscures the data, 2016-2018 saw clear seasonal trends that highlight opportunities to adjust pricing to attract more visitors during the slow seasons in the spring and fall. Additionally, our heat maps identify areas with a scarcer number of properties listed on Airbnb. We suggest that these regions, particularly those with close access to the subway could provide desirable properties with good access that tenants are looking for (based on our text analysis), and provide a good source of further capital investment.  
+  
+##### 2) Are there opportunities to draw more tenants by identifying attractively priced properties?  
+
+  Yes, based on our text analysis, while it is relatively small benefit individually, by highlighting property access to amenities and focusing property comfort and privacy, owners can achieve slightly higher occupancy rates AND charge more for their properties. Scaling to the entire Airbnb business in NYC could lead to large gains for relatively small material investments.  
+
+## 8) Marketing Plan  
+
+  We suggest that Airbnb could partner with local realtors to identify competitively priced investment opportunities in the areas with scarcer business. We also suggest that Airbnb offer consultative advice to owners to help them identify ways to improve the comfort of their properties to attract more visitors, particularly focused on visitor privacy. We also suggest that Airbnb advice owners to adjust their marketing strategies to highlight accessibility to amenities and room comfort to achieve higher revenue with minimal capital investment.
+
+## 9) Conclusions  
+  Data can lead to multiple interpretations - localized data is required, and we also see some limitations in current data and opportunities to improve analysis. Notably, property popularity in this analysis is gauged by proxy on the basis number_of_reviews and reviews_per_month. We suggest Airbnb start tracking occupancy rate - a percentage of nights occupied by property availability. This would allow a more accurate assessment of property popularity. Another weakness of the data we examined is that we cannot tell if the reviews were positive or negative or the content of the reviews on the properties. In order to do a more accurate sentiment analysis on what customers actually want, we would like to have access to this data. 
