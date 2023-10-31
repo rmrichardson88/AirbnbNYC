@@ -1,5 +1,4 @@
-# Analysis Projects in R
-In this repository, you will find a collection of data science portfolio projects that showcase my skills and experience. 
-These projects range from data cleaning and visualization to machine learning and deep learning models. 
-I've completed these projects using R, which is one of my preferred tools for data analysis and visualization, 
-particularly when robust statistical analysis is needed.
+# AirBnB Analysis Project
+Performed a thorough executive analysis for AirBnB strategy in New York City. Performed in R, the report consists of a wide-array of 
+strategies ranging from geospatial analysis to identify high-opportunity neighborhoods, text mining to identify important keywords in 
+property descriptions, and traits to look for in potential investment properties
